@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { createScene } from "./scene";
   import * as THREE from 'three';
-  import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+  import { OBJExporter } from 'three/addons/exporters/OBJExporter.js';
 
   let meshes = [],
       hex = [],
@@ -23,9 +23,6 @@
     // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
     meshes = await invoke("get_meshes")
     scene = createScene(el);
-
-    const directionalLight = new THREE.DirectionalLight( 0xffffff, 1 );
-    scene.add( directionalLight );
   });
 
   $: {
@@ -34,6 +31,23 @@
       vertice_mesh.visible = show_vertices;
       rendered_mesh.visible = show_faces;
     }
+  }
+
+  const addLighting = () => {
+      // Directional light for strong directional shading
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(5, 10, 7.5); // Adjust the position to suit the scene
+      scene.add(directionalLight);
+
+      // Ambient light for subtle overall lighting
+      const ambientLight = new THREE.AmbientLight(0x404040, 5); // Soft white light
+      scene.add(ambientLight);
+
+      // Hemisphere light for soft sky-like lighting
+      const hemisphereLight = new THREE.HemisphereLight(0xffffbb, 0x080820, 5);
+      scene.add(hemisphereLight);
+
+      // Optionally, you can add more lights like a PointLight or another DirectionalLight
   }
 
   const loadMesh = async (name, path) => {
@@ -48,83 +62,73 @@
   }
 
   const renderMesh = async () => {
-    let vertices = await getVertices();
-    await getFaces(vertices);
-  }
+    let verticesArray = await getVertices();
+    await getFaces(verticesArray); // Ensure you pass verticesArray from getVertices
+}
 
-  const getVertices = async () => {
+const getVertices = async () => {
     geometry = new THREE.BufferGeometry();
-    let sprite = new THREE.TextureLoader().load('./src/assets/textures/disc.png');
+    
     let vertices = await invoke("get_vertices", { padding: 20, padInterval: 0 });
 
-    let verticesArray = new Float32Array(vertices.length * 3); // each vertex has x, y, z
+    let verticesArray = new Float32Array(vertices.length * 3); // x, y, z for each vertex
+    let normalsArray = new Float32Array(vertices.length * 3);
+
     vertices.forEach((vertex, i) => {
         verticesArray[i * 3] = vertex[0];
         verticesArray[i * 3 + 1] = vertex[1];
         verticesArray[i * 3 + 2] = vertex[2];
+        normalsArray[i * 3] = vertex[3];
+        normalsArray[i * 3 + 1] = vertex[4];
+        normalsArray[i * 3 + 2] = vertex[5];
     });
-
-    vertice_count = vertices.length;
 
     geometry.setAttribute('position', new THREE.BufferAttribute(verticesArray, 3));
+    geometry.setAttribute('normal', new THREE.BufferAttribute(normalsArray, 3));
 
-    // Use PointsMaterial for point cloud materials
-    let material = new THREE.PointsMaterial({
-        size: 3,
-        sizeAttenuation: false,
-        map: sprite,
-        transparent: false,
-    });
-    material.color.setHSL(1.0, 1.0, 0.5);
+    return verticesArray; // Return the vertices array for use in getFaces
+}
 
-    // Use Points instead of the deprecated PointCloud
-    let particles = new THREE.Points(geometry, material);
-
-    // Add particles to the scene
-    scene.add(particles);
-
-    vertice_mesh = particles;
-
-    return verticesArray;
-  }
-
-  const getFaces = async (vertices = []) => {
+const getFaces = async (vertices) => {
     let faces = await invoke("get_faces", { padding: 0, padInterval: 0 });
-    face_count = faces.length;
-    let geo = new THREE.BufferGeometry();
 
-    let indices = new Uint16Array(faces.length * 3);
-
-    for(let i = 0; i < faces.length; i++) {
-      indices[i * 3] = faces[i][0];
-      indices[i * 3 + 1] = faces[i][1];
-      indices[i * 3 + 2] = faces[i][2];
-    }
-
-    let facesArray = new Uint16Array(faces.length * 3); // each face has 3 vertices
+    let facesArray = new Uint16Array(faces.length * 3); // Indices for each triangle
     faces.forEach((face, i) => {
         facesArray[i * 3] = face[0];
         facesArray[i * 3 + 1] = face[1];
         facesArray[i * 3 + 2] = face[2];
     });
 
-    //geo.setIndex(facesArray);
-    geo.setIndex(new THREE.BufferAttribute(facesArray, 3));
-    geo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-    geo.computeVertexNormals();
+    geometry.setIndex(new THREE.BufferAttribute(facesArray, 1)); // Set face indices
 
-    geo = BufferGeometryUtils.toTrianglesDrawMode(geo, THREE.TriangleStripDrawMode);
-
-    const material = new THREE.MeshBasicMaterial({ color: 0x808080 });
-    material.side = THREE.DoubleSide;
-    const mesh = new THREE.Mesh(geo, material);
+    // Finalize mesh
+    const material = new THREE.MeshStandardMaterial({
+        color: 0x808080, // Grey color
+        metalness: 0.5, // For shiny surface, only in MeshStandardMaterial
+        roughness: 0.7, // Roughness controls smoothness of surface, only in MeshStandardMaterial
+        side: THREE.DoubleSide, // Ensures both sides of the mesh are visible
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    
     scene.add(mesh);
+
+    // Add lighting
+    addLighting();
 
     console.log('vertices', vertices);
     console.log('faces', facesArray);
+}
 
-    rendered_mesh = mesh;
-  }
+const exportOBJ = () => {
+  const exporter = new OBJExporter();
+  const objData = exporter.parse(scene);
+  const blob = new Blob([objData], { type: 'text/plain' });
+
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = current_mesh.replace('msh', 'obj');
+  link.click();
+}
 </script>
 
 <main class="container" style="padding: 0; margin: 0;">
@@ -137,11 +141,14 @@
         <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">{resource_location}</p>
         <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">Vertex Count: {vertice_count}</p>
         <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">Face Count: {face_count}</p>
-        <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">
+        <!-- <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">
           <input type="checkbox" bind:checked={show_vertices} /> Show Vertices
-        </p>
-        <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">
+        </p> -->
+        <!-- <p style="background-color: rgba(130, 130, 130, 0.25); margin-right: 10px; border-radius: 10px; padding-left: 10px; padding-right: 10px; padding-top: 5px; paddding-bottom: 5px; color: white;">
           <input type="checkbox" bind:checked={show_faces} /> Show Faces
+        </p> -->
+        <p>
+          <button on:click|preventDefault={exportOBJ}>Export OBJ</button>
         </p>
       {/if}
     </div>

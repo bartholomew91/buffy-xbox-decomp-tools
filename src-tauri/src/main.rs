@@ -49,6 +49,15 @@ fn find_pattern_offset(pattern: &[u8], start_offset: Option<usize>) -> Option<us
         // Search for the pattern in the subslice.
         content_slice.windows(pattern.len()).position(|window| window == pattern)
                      .map(|pos| pos + start + pattern.len())
+        // find all occurrences of the pattern in the subslice.
+        // let mut occurrences = Vec::new();
+        // for (i, window) in content_slice.windows(pattern.len()).enumerate() {
+        //     if window == pattern {
+        //         occurrences.push(i + start);
+        //     }
+        // }
+        // occurrences
+        
     } else {
         None
     }
@@ -161,14 +170,14 @@ fn get_vertices(padding: i32, pad_interval: i32) -> Vec<Vec<f32>> {
             println!("num_vertices: {:?}", num_vertices);
 
             for i in 0..num_vertices {
-                let x = file_data.handle.read_f32::<LittleEndian>().unwrap();
-                let y = file_data.handle.read_f32::<LittleEndian>().unwrap();
-                let z = file_data.handle.read_f32::<LittleEndian>().unwrap();
+                let x = file_data.handle.read_f32::<LittleEndian>().unwrap().round();
+                let y = file_data.handle.read_f32::<LittleEndian>().unwrap().round();
+                let z = file_data.handle.read_f32::<LittleEndian>().unwrap().round();
                 let n1 = file_data.handle.read_f32::<LittleEndian>().unwrap();
                 let n2 = file_data.handle.read_f32::<LittleEndian>().unwrap();
                 let n3 = file_data.handle.read_f32::<LittleEndian>().unwrap();
-                let u = file_data.handle.read_f32::<LittleEndian>().unwrap();
-                let v = file_data.handle.read_f32::<LittleEndian>().unwrap();
+                let u = file_data.handle.read_f32::<LittleEndian>().unwrap().round();
+                let v = file_data.handle.read_f32::<LittleEndian>().unwrap().round();
 
                 let xyz = vec![x, y, z, n1, n2, n3, u, v];
 
@@ -185,7 +194,7 @@ fn get_vertices(padding: i32, pad_interval: i32) -> Vec<Vec<f32>> {
 }
 
 #[tauri::command]
-fn get_faces(padding: i32, pad_interval: i32) -> Vec<Vec<i8>> {
+fn get_faces(padding: i32, pad_interval: i32) -> Vec<Vec<i16>> {
     let offset = match find_pattern_offset(&FACES_SEQUENCE, None) {
         Some(offset) => {
             offset
@@ -197,19 +206,21 @@ fn get_faces(padding: i32, pad_interval: i32) -> Vec<Vec<i8>> {
     let mut faces = Vec::new();
     let mut file_data = FILE_DATA.lock().expect("Lock failed");
 
-    println!("offset: {:?}", offset);
+    println!("faces offset: {:?}", offset);
     
     let _ = match *file_data {
         Some(ref mut file_data) => {
             file_data.handle.seek(SeekFrom::Start(offset.try_into().unwrap()));
 
+            let chunk_size = file_data.handle.read_i32::<LittleEndian>().unwrap();
             let num_faces = file_data.handle.read_i32::<LittleEndian>().unwrap();
-            println!("num_faces: {:?}", num_faces);
+
+            println!("chunk_size: {:?} num_faces: {:?}", chunk_size, num_faces);
 
             for _ in 0..num_faces {
-                let a = file_data.handle.read_i8().unwrap();
-                let b = file_data.handle.read_i8().unwrap();
-                let c = file_data.handle.read_i8().unwrap();
+                let a = file_data.handle.read_i16::<LittleEndian>().unwrap();
+                let b = file_data.handle.read_i16::<LittleEndian>().unwrap();
+                let c = file_data.handle.read_i16::<LittleEndian>().unwrap();
 
                 let abc = vec![a, b, c];
 
@@ -220,9 +231,12 @@ fn get_faces(padding: i32, pad_interval: i32) -> Vec<Vec<i8>> {
             return vec![];
         }
     };
+    let res: Vec<Vec<i16>> = faces;
 
-    println!("faces: {:?}", faces);
-    faces
+    // let res: Vec<Vec<i8>> = faces.into_iter().rev().collect();
+
+    println!("faces: {:?}", res);
+    res
 }
 
 pub fn get_file_data() -> MutexGuard<'static, Option<FileData>> {
